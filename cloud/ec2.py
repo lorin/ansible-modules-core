@@ -133,7 +133,8 @@ options:
   instance_tags:
     version_added: "1.0"
     description:
-      - a hash/dictionary of tags to add to the new instance; '{"key":"value"}' and '{"key":"value","key":"value"}'
+      - a hash/dictionary of tags '{"key":"value"}' and '{"key":"value","key":"value"}'
+      - used for attaching to new instances and for starting/stopping instance by tag
     required: false
     default: null
     aliases: []
@@ -410,6 +411,15 @@ local_action:
       region: '{{ region }}'
       state: stopped
       wait: True
+
+#
+# Start stopped instances specified by tag
+#
+- local_action:
+    module: ec2
+    instance_tags:
+        Name: ExtraPower
+    state: running
 
 #
 # Enforce that 5 instances with a tag "foo" are running
@@ -1052,7 +1062,7 @@ def terminate_instances(module, ec2, instance_ids):
     return (changed, instance_dict_array, terminated_instance_ids)
 
 
-def startstop_instances(module, ec2, instance_ids, state):
+def startstop_instances(module, ec2, instance_ids, state, instance_tags):
     """
     Starts or stops a list of existing instances
 
@@ -1060,7 +1070,12 @@ def startstop_instances(module, ec2, instance_ids, state):
     ec2: authenticated ec2 connection object
     instance_ids: The list of instances to start in the form of
       [ {id: <inst-id>}, ..]
+    instance_tags: A dict of tag keys and values in the form of
+      {key: value, ... }
     state: Intended state ("running" or "stopped")
+
+    Note that if instance_ids and instance_tags are both non-empty,
+    this method will process the intersection of the two
 
     Returns a dictionary of instance information
     about the instances started/stopped.
@@ -1076,12 +1091,24 @@ def startstop_instances(module, ec2, instance_ids, state):
     instance_dict_array = []
     
     if not isinstance(instance_ids, list) or len(instance_ids) < 1:
-        module.fail_json(msg='instance_ids should be a list of instances, aborting')
+        # Fail unless the user defined instance tags
+        if not instance_tags:
+            module.fail_json(msg='instance_ids should be a list of instances, aborting')
+
+    # To make an EC2 tag filter, we need to prepend 'tag:' to each key.
+    # An empty filter does no filtering, so it's safe to pass it to the
+    # get_all_instances method even if the user did not specify instance_tags
+    filters = {}
+    if instance_tags:
+        for key, value in instance_tags.items():
+            filters["tag:" + key] = value
+
+     # Check that our instances are not in the state we want to take
 
     # Check that our instances are not in the state we want to take them to
     # and change them to our desired state
     running_instances_array = []
-    for res in ec2.get_all_instances(instance_ids):
+    for res in ec2.get_all_instances(instance_ids, filters=filters):
         for inst in res.instances:
            if inst.state != state:
                instance_dict_array.append(get_instance_info(inst))
@@ -1175,10 +1202,10 @@ def main():
 
     elif state in ('running', 'stopped'):
         instance_ids = module.params.get('instance_ids')
-        if not isinstance(instance_ids, list):
-            module.fail_json(msg='running list needs to be a list of instances to run: %s' % instance_ids)
+        if not (isinstance(instance_ids, list) or isinstance(instance_tags, dict)):
+            module.fail_json(msg='running list needs to be a list of instances or set of tags to run: %s' % instance_ids)
 
-        (changed, instance_dict_array, new_instance_ids) = startstop_instances(module, ec2, instance_ids, state)
+        (changed, instance_dict_array, new_instance_ids) = startstop_instances(module, ec2, instance_ids, state, instance_tags)
 
     elif state == 'present':
         # Changed is always set to true when provisioning new instances
