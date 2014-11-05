@@ -105,6 +105,7 @@ Remove image from local docker storage:
 '''
 
 try:
+    import os
     import sys
     import re
     import json
