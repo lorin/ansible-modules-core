@@ -29,6 +29,7 @@ version_added: "1.5"
 short_description: manage docker images
 description:
      - Create, check and remove docker images
+     - If DOCKER_HOST is set, will get connection info from environment variables
 options:
   path:
     description:
@@ -108,6 +109,7 @@ try:
     import re
     import json
     import docker.client
+    import docker.utils
     from requests.exceptions import *
     from urlparse import urlparse
 except ImportError, e:
@@ -128,7 +130,12 @@ class DockerImageManager:
         self.tag = self.module.params.get('tag')
         self.nocache = self.module.params.get('nocache')
         docker_url = urlparse(module.params.get('docker_url'))
-        self.client = docker.Client(base_url=docker_url.geturl(), timeout=module.params.get('timeout'))
+        if 'DOCKER_HOST' in os.environ:
+            args = docker.utils.kwargs_from_env(assert_hostname=False)
+            args['timeout'] = module.params.get('timeout')
+            self.client = docker.Client(**args)
+        else:
+            self.client = docker.Client(base_url=docker_url.geturl(), timeout=module.params.get('timeout'))
         self.changed = False
         self.log = []
         self.error_msg = None

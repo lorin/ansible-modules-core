@@ -28,6 +28,7 @@ version_added: "1.4"
 short_description: manage docker containers
 description:
      - Manage the life cycle of docker containers.
+     - If DOCKER_HOST is set, will get connection info from environment variables
 options:
   count:
     description:
