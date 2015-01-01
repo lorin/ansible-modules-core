@@ -231,6 +231,11 @@ options:
     default: false
     aliases: []
     version_added: "1.9"
+  wait:
+    description:
+      - Wait until process terminates.
+      - Fails on non-zero return code
+    version_added: "1.9"
 
 author: Cove Schneider, Joshua Conner, Pavel Antonov
 requirements: [ "docker-py >= 0.3.0", "docker >= 0.10.0" ]
@@ -774,7 +779,7 @@ class DockerManager(object):
 
         return containers
 
-    def start_containers(self, containers):
+    def start_containers(self, containers, wait=False):
         params = {
             'lxc_conf': self.lxc_conf,
             'binds': self.binds,
@@ -806,6 +811,8 @@ class DockerManager(object):
         for i in containers:
             self.client.start(i['Id'], **params)
             self.increment_counter('started')
+            if wait:
+                self.wait_for_container(i)
 
     def stop_containers(self, containers):
         for i in containers:
@@ -824,11 +831,21 @@ class DockerManager(object):
             self.client.kill(i['Id'])
             self.increment_counter('killed')
 
-    def restart_containers(self, containers):
+    def restart_containers(self, containers, wait=False):
         for i in containers:
             self.client.restart(i['Id'])
             self.increment_counter('restarted')
+            if wait:
+                self.wait_for_container(i)
 
+    def wait_for_container(self, container):
+        cid = container['Id']
+        rc = self.client.wait(cid)
+        if rc != 0:
+            # Use the container's output as the fail message
+            msg = self.client.logs(cid, stdout=True, stderr=True,
+                                   stream=False, timestamps=False)
+            self.module.fail_json(rc=rc, msg=msg)
 
 def main():
     module = AnsibleModule(
@@ -865,6 +882,7 @@ def main():
             name            = dict(default=None),
             net             = dict(default=None),
             insecure_registry = dict(default=False, type='bool'),
+            wait            = dict(default=False, type='bool'),
         )
     )
 
@@ -876,6 +894,7 @@ def main():
         count = int(module.params.get('count'))
         name = module.params.get('name')
         image = module.params.get('image')
+        wait = module.params.get('wait')
 
         if count < 0:
             module.fail_json(msg="Count must be greater than zero")
@@ -923,12 +942,12 @@ def main():
             if state == "running":
                 # make sure a container with `name` is running
                 if name and "/" + name not in map(lambda x: x.get('Name'), running_containers):
-                    manager.start_containers(deployed_containers)
+                    manager.start_containers(deployed_containers, wait=wait)
 
                 # start more containers if we don't have enough
                 elif delta > 0:
                     containers = manager.create_containers(delta)
-                    manager.start_containers(containers)
+                    manager.start_containers(containers, wait=wait)
 
                 # stop containers if we have too many
                 elif delta < 0:
